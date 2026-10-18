@@ -367,6 +367,9 @@ class LarpManager {
           end: endFilter,
         },
         include: LARP_INCLUDE_OBJ,
+        orderBy: {
+          end: "desc",
+        },
       });
       return larps.map((larp) => ({
         attendance: attendanceMap.get(larp.id),

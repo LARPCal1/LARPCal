@@ -3,13 +3,21 @@ import LarpAPI from "../util/api";
 import { useState } from "react";
 import { Pagination, Skeleton, Stack, Typography } from "@mui/material";
 import { TextLink } from "../components/ui/TextLink";
+import { useUser } from "../hooks/useUser";
+import { Navigate } from "react-router-dom";
 
 export default function PlayerListPage() {
+  const { user } = useUser();
   const [page, setPage] = useState(0);
   const { data } = useQuery({
     queryKey: ["users", "listing", { page }],
     queryFn: () => LarpAPI.getListedUsers(page),
+    enabled: !!user.username,
   });
+
+  if (!user.username) {
+    return <Navigate to="/auth/login" />;
+  }
 
   const showPagination = data?.pages && data.pages > 1;
   const pagination = showPagination && (
@@ -23,8 +31,10 @@ export default function PlayerListPage() {
 
   return (
     <>
-      <Typography variant="h1" mb={!showPagination ? 2 : 0}>
-        Players
+      <Typography variant="h1">Players</Typography>
+
+      <Typography variant="body2" mb={2}>
+        <TextLink to="/my-larps">Edit your settings here</TextLink>
       </Typography>
 
       {pagination}
