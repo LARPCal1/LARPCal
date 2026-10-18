@@ -6,6 +6,7 @@ import FilterLarpsFormFields from "./FilterLarpsFormFields";
 import { larpQueryToSearchParams } from "../../util/utilities";
 import { useSearchQuery } from "../../hooks/useSearchQuery";
 import { useCallback, useMemo } from "react";
+import { DateTime } from "luxon";
 
 type FilterLarpsFormProps = {
   onSubmitCallback: () => void;
@@ -40,6 +41,11 @@ function FilterLarpsForm({ onSubmitCallback }: FilterLarpsFormProps) {
           }
         } else if (typeof value === "string" && value.trim() !== "") {
           reducedFormData[typedKey] = value;
+        } else if (value instanceof DateTime) {
+          const date = value.toISO();
+          if (date) {
+            reducedFormData[typedKey] = date;
+          }
         }
       });
 
