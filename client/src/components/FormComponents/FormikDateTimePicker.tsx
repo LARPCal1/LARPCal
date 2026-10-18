@@ -24,7 +24,7 @@ function FormikDateTimePicker({
     getNested(touched, name) && getNested(errors, name) ? "Error" : "";
 
   function handleChange(value: DateTime | null) {
-    setFieldValue(name, value?.toISO());
+    setFieldValue(name, value);
   }
   function handleBlur() {
     setFieldTouched(name, true);
