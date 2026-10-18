@@ -1,5 +1,5 @@
-import { Response } from "express";
-import { BadRequestError } from "./expressError";
+import { type Response } from "express";
+import { BadRequestError } from "./expressError.ts";
 
 export function omitKeys<T extends object, K extends keyof T>(
   obj: T,
@@ -10,6 +10,25 @@ export function omitKeys<T extends object, K extends keyof T>(
     delete result[key];
   }
   return result;
+}
+
+export function toInt(int: string | number | undefined) {
+  if (!int) {
+    return 0;
+  }
+
+  if (typeof int === "number") {
+    return Math.floor(int);
+  }
+
+  if (typeof int === "string") {
+    const num = Number.parseInt(int);
+    if (!isNaN(num)) {
+      return num;
+    }
+  }
+
+  return 0;
 }
 
 export function toValidId(id: string | undefined) {

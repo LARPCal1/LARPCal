@@ -15,6 +15,9 @@ import {
   UserLoginData,
   Newsletter,
   NewsletterForCreate,
+  UserLarpVisibility,
+  LarpAttendance,
+  LarpAttendanceStatus,
 } from "../types";
 import { JsonToLarp } from "./typeConverters";
 
@@ -136,6 +139,43 @@ class LarpAPI {
     return response.user;
   }
 
+  static async getUserLarps(username: string, showAll = false) {
+    const response = await this.request(
+      `users/${username}/larps${showAll ? "?showAll=1" : ""}`,
+    );
+    return {
+      visibility: response.visibility as UserLarpVisibility,
+      future: Array.isArray(response.future)
+        ? ((response.future as LarpAsJSON[]).map(JsonToLarp) as (Larp & {
+            attendance: LarpAttendanceStatus;
+          })[])
+        : null,
+      past: Array.isArray(response.past)
+        ? ((response.past as LarpAsJSON[]).map(JsonToLarp) as (Larp & {
+            attendance: LarpAttendanceStatus;
+          })[])
+        : null,
+    };
+  }
+
+  static async getUserCalendar(username: string) {
+    const response = await this.request(`users/${username}/calendar`);
+    const url = response.url;
+    if (typeof url === "string") {
+      return { url: new URL(url, BASE_URL).toString() };
+    }
+    return {
+      url: null,
+    };
+  }
+
+  static async getListedUsers(
+    page = 0,
+  ): Promise<{ users: PublicUser[]; pages: number }> {
+    const response = await this.request(`users/larps?page=${page}`);
+    return { users: response.users, pages: response.pages };
+  }
+
   //get all users
   static async getAllUsers(): Promise<PublicUser[]> {
     const response = await this.request("users/");
@@ -153,6 +193,21 @@ class LarpAPI {
   static async updateUser(data: UserForUpdate, username: string) {
     const responseData = await this.request(`users/${username}`, data, "patch");
     return responseData.user;
+  }
+
+  static updateUserLarpVisibility(
+    data: UserLarpVisibility,
+    username: string,
+  ): Promise<UserLarpVisibility> {
+    return this.request(`users/${username}/larps`, data, "put");
+  }
+
+  static updateUserCalendar(username: string, enable: boolean) {
+    return this.request(
+      `users/${username}/calendar`,
+      undefined,
+      enable ? "post" : "delete",
+    );
   }
 
   /**  DELETE  */
@@ -184,9 +239,14 @@ class LarpAPI {
     return JsonToLarp(response.larp);
   }
 
+  static async getLarpAttendanceById(id: number): Promise<LarpAttendance> {
+    const response = await this.request(`events/${id}/attendance`);
+    return response;
+  }
+
   static async getAllLarps(query: string | null): Promise<Larp[]> {
     const response = query
-      ? await this.request(`events?q=${query}`)
+      ? await this.request(`events?${query}`)
       : await this.request(`events`);
     return response.larps.map((larp: LarpAsJSON) => JsonToLarp(larp));
   }
@@ -217,6 +277,18 @@ class LarpAPI {
   static async DeleteLarp(id: number): Promise<Larp> {
     const response = await this.request(`events/${id}`, undefined, "delete");
     return response.larp;
+  }
+
+  static async attendLarp(
+    id: number,
+    status: LarpAttendanceStatus,
+  ): Promise<LarpAttendance> {
+    const response = await this.request(
+      `events/${id}/attend`,
+      { status },
+      "put",
+    );
+    return response;
   }
 
   /************************ ORGANIZATION ********************************/

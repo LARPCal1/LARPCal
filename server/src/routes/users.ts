@@ -1,14 +1,30 @@
-import express, { Request, Response } from "express";
-const router = express.Router();
-
+import express, { type Request, type Response } from "express";
 import jsonschema from "jsonschema";
-import userForCreateSchema from "../schemas/userForCreate.json";
-import userUpdateSchema from "../schemas/userUpdate.json";
+import ical from "ical-generator";
 
-import { BadRequestError } from "../utils/expressError";
-import { createToken } from "../utils/tokens";
-import { ensureAdmin, ensureCorrectUserOrAdmin } from "../middleware/auth";
-import UserManager from "../models/UserManager";
+import userForCreateSchema from "../schemas/userForCreate.json" with { type: "json" };
+import userUpdateSchema from "../schemas/userUpdate.json" with { type: "json" };
+import userUpdateVisibilitySchema from "../schemas/userUpdateVisibility.json" with { type: "json" };
+
+import { BadRequestError } from "../utils/expressError.ts";
+import { createToken } from "../utils/tokens.ts";
+import {
+  ensureAdmin,
+  ensureCorrectUserOrAdmin,
+  ensureLoggedIn,
+} from "../middleware/auth.ts";
+import UserManager from "../models/UserManager.ts";
+import LarpManager from "../models/LarpManager.ts";
+import type { Larp, PublicUser, UserLarpVisibility } from "../types/index.ts";
+import {
+  ATTENDANCE_STATUS_GOING,
+  keyToCalendarUrl,
+  larpsToPastOrFuture,
+} from "../utils/attendance.ts";
+import { larpIdToUrl } from "../utils/larps.ts";
+import { toInt } from "../utils/helpers.ts";
+
+const router = express.Router();
 
 /** POST / { user }  => { user, token }
  *
@@ -44,10 +60,29 @@ router.post("/", ensureAdmin, async function (req: Request, res: Response) {
  * Authorization required: admin
  **/
 
-router.get("/", ensureAdmin, async function (req: Request, res: Response) {
+router.get("/", ensureAdmin, async (_req: Request, res: Response) => {
   const users = await UserManager.findAll();
   return res.json({ users });
 });
+
+router.get(
+  "/larps",
+  ensureLoggedIn,
+  async (
+    req: Request<
+      never,
+      { users: PublicUser[]; pages: number },
+      never,
+      { page?: string }
+    >,
+    res: Response,
+  ) => {
+    const { page: pageRaw } = req.query;
+    const page = toInt(pageRaw);
+    const { users, total } = await UserManager.findForListingPage(page, 50);
+    res.json({ users, pages: Math.ceil(total / 50) });
+  },
+);
 
 /** GET /[username] => { user }
  *
@@ -57,16 +92,203 @@ router.get("/", ensureAdmin, async function (req: Request, res: Response) {
  * Authorization required: admin or same user-as-:username
  **/
 
-router.get("/:username", ensureCorrectUserOrAdmin, async (req, res) => {
-  const user = await UserManager.getUser(req.params.username);
-  const following = await UserManager.getUserFollows(req.params.username);
-  res.json({
-    user: {
-      ...user,
-      following,
-    },
-  });
-});
+router.get(
+  "/:username",
+  ensureCorrectUserOrAdmin,
+  async (req: Request<{ username: string }>, res) => {
+    const user = await UserManager.getUser(req.params.username);
+    const following = await UserManager.getUserFollows(req.params.username);
+    res.json({
+      user: {
+        ...user,
+        following,
+      },
+    });
+  },
+);
+
+/**
+ * GET /[username]/larps
+ * Gets a user's LARP attendance
+ */
+router.get(
+  "/:username/larps",
+  ensureLoggedIn,
+  async (
+    req: Request<
+      { username: string },
+      {
+        visibility: UserLarpVisibility;
+        past: Larp[] | null;
+        future: Larp[] | null;
+      },
+      never,
+      { showAll?: boolean }
+    >,
+    res,
+  ) => {
+    const { username } = req.params;
+    const { showAll = false } = req.query;
+    const includeAll = username === res.locals.user?.username && showAll;
+    const larpVisibility = await UserManager.getUserLarpVisibility(username);
+
+    if (!includeAll && !larpVisibility.past && !larpVisibility.future) {
+      return res.json({
+        visibility: larpVisibility,
+        past: null,
+        future: null,
+      });
+    }
+
+    const larps = await LarpManager.getLarpsByUsername(
+      includeAll
+        ? {
+            username,
+            past: true,
+            future: true,
+          }
+        : {
+            username,
+            ...larpVisibility,
+            status: ATTENDANCE_STATUS_GOING,
+          },
+    );
+
+    const { past, future } = larpsToPastOrFuture(larps);
+
+    res.json({
+      visibility: larpVisibility,
+      past: larpVisibility.past || includeAll ? past : null,
+      future: larpVisibility.future || includeAll ? future : null,
+    });
+  },
+);
+
+/**
+ * PUT /[username]/larps
+ * Updates a user's attendance visibility.
+ */
+router.put(
+  "/:username/larps",
+  ensureCorrectUserOrAdmin,
+  async (
+    req: Request<{ username: string }, UserLarpVisibility, UserLarpVisibility>,
+    res: Response,
+  ) => {
+    const validator = jsonschema.validate(
+      req.body,
+      userUpdateVisibilitySchema,
+      {
+        required: true,
+      },
+    );
+    if (!validator.valid) {
+      const errs = validator.errors.map((e: Error) => e.stack);
+      throw new BadRequestError(errs.join(", "));
+    }
+
+    const {
+      params: { username },
+      body,
+    } = req;
+    const larpVisibility = await UserManager.updateUserLarpVisibility({
+      username,
+      ...body,
+    });
+
+    return res.json(larpVisibility);
+  },
+);
+
+router.get(
+  "/:username/calendar",
+  ensureCorrectUserOrAdmin,
+  async (req: Request<{ username: string }>, res: Response) => {
+    const { username } = req.params;
+
+    const userKey = await UserManager.getUserCalendarKey(username);
+    if (!userKey) {
+      return res.json({ url: null });
+    }
+
+    res.json({ url: keyToCalendarUrl(username, userKey) });
+  },
+);
+
+router.post(
+  "/:username/calendar",
+  ensureCorrectUserOrAdmin,
+  async (req: Request<{ username: string }>, res: Response) => {
+    const { username } = req.params;
+
+    const userKey = await UserManager.generateUserCalendarKey(username);
+    res.json({ url: keyToCalendarUrl(username, userKey) });
+  },
+);
+
+router.delete(
+  "/:username/calendar",
+  ensureCorrectUserOrAdmin,
+  async (req: Request<{ username: string }>, res: Response) => {
+    const { username } = req.params;
+
+    await UserManager.deleteUserCalendarKey(username);
+
+    res.sendStatus(200);
+  },
+);
+
+router.get(
+  "/:username/calendar/share",
+  async (
+    req: Request<{ username: string }, unknown, never, { key: string }>,
+    res: Response,
+  ) => {
+    const { key } = req.query;
+    const { username } = req.params;
+    if (!username || !key) {
+      throw new BadRequestError("Missing username or key");
+    }
+
+    const userKey = await UserManager.getUserCalendarKey(username);
+    if (userKey !== key) {
+      throw new BadRequestError("Invalid key provided");
+    }
+
+    const larps = await LarpManager.getLarpsByUsername({
+      username,
+      past: true,
+      future: true,
+      status: ATTENDANCE_STATUS_GOING,
+    });
+
+    const calendar = ical({
+      events: larps.map((larp) => ({
+        id: larp.id,
+        summary: larp.title,
+        start: larp.start,
+        end: larp.end,
+        description: larp.description,
+        organizer: larp.organization
+          ? {
+              email: larp.organization.email,
+              name: larp.organization.orgName,
+            }
+          : null,
+        location: `${larp.city}, ${larp.country}`,
+        url: larpIdToUrl(larp.id),
+      })),
+      prodId: "-//larpcal.com//larp-feed//EN",
+    });
+
+    res.writeHead(200, {
+      "Content-Disposition": 'attachment; filename="calendar.ics"',
+      "Content-Type": "text/calendar; charset=utf-8",
+    });
+
+    res.end(calendar.toString());
+  },
+);
 
 /** PATCH /[username] { user } => { user }
  *
@@ -78,16 +300,20 @@ router.get("/:username", ensureCorrectUserOrAdmin, async (req, res) => {
  * Authorization required: admin or same-user-as-:username
  **/
 
-router.patch("/:username", ensureCorrectUserOrAdmin, async (req, res) => {
-  const validator = jsonschema.validate(req.body, userUpdateSchema);
-  if (!validator.valid) {
-    const errs = validator.errors.map((e: Error) => e.stack);
-    throw new BadRequestError(errs.join(", "));
-  }
+router.patch(
+  "/:username",
+  ensureCorrectUserOrAdmin,
+  async (req: Request<{ username: string }>, res) => {
+    const validator = jsonschema.validate(req.body, userUpdateSchema);
+    if (!validator.valid) {
+      const errs = validator.errors.map((e: Error) => e.stack);
+      throw new BadRequestError(errs.join(", "));
+    }
 
-  const user = await UserManager.updateUser(req.params.username, req.body);
-  return res.json({ user });
-});
+    const user = await UserManager.updateUser(req.params.username, req.body);
+    return res.json({ user });
+  },
+);
 
 /** DELETE /[username]  =>  { deleted: username }
  *
@@ -97,7 +323,7 @@ router.patch("/:username", ensureCorrectUserOrAdmin, async (req, res) => {
 router.delete(
   "/:username",
   ensureCorrectUserOrAdmin,
-  async function (req: Request, res: Response) {
+  async function (req: Request<{ username: string }>, res: Response) {
     const deletedUser = await UserManager.deleteUser(req.params.username);
     return res.json({ deleted: deletedUser });
   },

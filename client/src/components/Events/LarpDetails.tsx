@@ -6,8 +6,8 @@ import {
   faUser,
 } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { Box, Stack, Typography } from "@mui/material";
-import { useContext } from "react";
+import { Box, Button, Stack, Typography } from "@mui/material";
+import { useContext, useMemo } from "react";
 
 import { Larp } from "../../types";
 import { JSDateToLuxon } from "../../util/typeConverters";
@@ -21,6 +21,7 @@ import TagCard from "./TagDisplay";
 
 import "./LarpDetails.scss";
 import { formatTicketStatus } from "../../util/utilities";
+import { useLarpAttendance } from "../../hooks/useFetchLarp";
 
 type LarpDetailsProps = {
   larp: Larp;
@@ -29,6 +30,9 @@ type LarpDetailsProps = {
 function LarpDetails({ larp }: LarpDetailsProps) {
   const { user } = useContext(userContext);
   const { username, isAdmin } = user;
+
+  const { attendance, update } = useLarpAttendance(larp.id);
+  const isPast = useMemo(() => larp.end < new Date(), [larp.end]);
 
   return (
     <Box className="LarpDetails">
@@ -67,6 +71,7 @@ function LarpDetails({ larp }: LarpDetailsProps) {
       >
         <Typography
           variant="h4"
+          component="p"
           className="filled-secondary"
           sx={{ padding: "0.5rem" }}
         >
@@ -101,12 +106,54 @@ function LarpDetails({ larp }: LarpDetailsProps) {
               {larp.organization.orgName}
             </TextLink>
           </Typography>
-          <Typography
-            // color={ticketColor}
-            variant={"details2"}
-          >
+          <Typography variant="details2" component="p">
             Tickets: {formatTicketStatus(larp.ticketStatus)}
           </Typography>
+          <Typography variant="details2" component="p" className="attendance">
+            {!!attendance?.attendees.wanting && !isPast && (
+              <span>{attendance.attendees.wanting} want to go</span>
+            )}
+            {!!attendance?.attendees.going && (
+              <span>
+                {attendance.attendees.going} {isPast ? "went" : "going"}
+              </span>
+            )}
+          </Typography>
+
+          {!!username && !isPast && (
+            <Stack direction="row" spacing={1} mt={1}>
+              <Button variant="contained" onClick={() => update("wanting")}>
+                {attendance?.attendance === "wanting"
+                  ? "No longer interested"
+                  : "I am interested"}
+              </Button>
+              <Button
+                variant="contained"
+                color="success"
+                onClick={() => update("going")}
+              >
+                {attendance?.attendance === "going"
+                  ? "No longer going"
+                  : "I am going"}
+              </Button>
+            </Stack>
+          )}
+          {!!username && isPast && (
+            <Box mt={1}>
+              <Button
+                variant="contained"
+                onClick={() => update("going")}
+                color={
+                  attendance?.attendance === "going" ? "primary" : "success"
+                }
+              >
+                {attendance?.attendance === "going" ? "I did not go" : "I went"}
+              </Button>
+            </Box>
+          )}
+          {!username && (
+            <Typography>Log in to mark yourself as going</Typography>
+          )}
         </Box>
 
         <section id="About">

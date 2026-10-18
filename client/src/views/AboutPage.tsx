@@ -7,7 +7,7 @@ import { TextLink } from "../components/ui/TextLink";
 function AboutPage() {
   return (
     <>
-      <Stack direction="column" spacing={2} alignContent="center" m="2rem">
+      <Stack direction="column" spacing={2} alignContent="center">
         <Box
           className="filled-light"
           sx={{
@@ -143,11 +143,11 @@ function AboutPage() {
           <Typography>
             Questions, comments and feedback can be sent to the maintenance of
             the calendar at{" "}
-            <a href="mailto:jacob@larpcal.com">Jacob@larpcal.com</a>
+            <a href="mailto:jacob@larpcal.com">jacob@larpcal.com</a>
           </Typography>
 
           <Typography>
-            The calendar was funded by Jacob Møller jensen and developed by
+            The calendar was funded by Jacob Møller Jensen and developed by
             Stuart Fleisher and Echo
           </Typography>
         </Box>

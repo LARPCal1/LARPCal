@@ -1,17 +1,30 @@
 import bcrypt from "bcrypt";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "../generated/prisma/client.ts";
 
-import { prisma } from "../prismaSingleton";
-import { BCRYPT_WORK_FACTOR } from "../config";
-import { PublicUser, UserForCreate, UserForUpdate } from "../types";
+import { prisma } from "../prismaSingleton.ts";
+import { BCRYPT_WORK_FACTOR } from "../config.ts";
+import type {
+  PublicUser,
+  UserForCreate,
+  UserForUpdate,
+  UserLarpVisibility,
+} from "../types/index.ts";
 
 import {
   BadRequestError,
   NotFoundError,
   UnauthorizedError,
-} from "../utils/expressError";
-import { omitKeys } from "../utils/helpers";
-import { NewsletterManager } from "./NewsletterManager";
+} from "../utils/expressError.ts";
+import { omitKeys } from "../utils/helpers.ts";
+import { NewsletterManager } from "./NewsletterManager.ts";
+import {
+  ATTENDANCE_VISIBILITY_FUTURE,
+  ATTENDANCE_VISIBILITY_LISTED,
+  ATTENDANCE_VISIBILITY_NONE,
+  ATTENDANCE_VISIBILITY_PAST,
+  userVisibility,
+} from "../utils/attendance.ts";
+import { randomUUID } from "node:crypto";
 
 const USER_INCLUDE_OBJ = {
   organization: {
@@ -96,6 +109,39 @@ class UserManager {
     return users.map(userToPublicUser);
   }
 
+  static async findForListingPage(
+    page = 0,
+    maxPerPage = 50,
+  ): Promise<{ users: PublicUser[]; total: number }> {
+    const [listedUsers, countRows] = await Promise.all([
+      prisma.$queryRaw<{ id: number }[]>`
+        SELECT "id"
+        FROM "users"
+        WHERE ("eventVisibility" & ${ATTENDANCE_VISIBILITY_LISTED}) <> 0
+        ORDER BY "id" ASC
+        LIMIT ${maxPerPage}
+        OFFSET ${page * maxPerPage}
+      `,
+      prisma.$queryRaw<{ total: bigint }[]>`
+        SELECT COUNT(*) AS "total"
+        FROM "users"
+        WHERE ("eventVisibility" & ${ATTENDANCE_VISIBILITY_LISTED}) <> 0
+      `,
+    ]);
+    const total = Number(countRows[0].total);
+
+    if (!listedUsers.length) {
+      return { users: [], total };
+    }
+
+    const users = await prisma.user.findMany({
+      where: { id: { in: listedUsers.map(({ id }) => id) } },
+      include: USER_INCLUDE_OBJ,
+      orderBy: { id: "asc" },
+    });
+    return { users: users.map(userToPublicUser), total };
+  }
+
   /** Fetches a User by username.
    * Returns {username, firstName, lastName, email, isAdmin}
    * Throws NotFoundError on missing record
@@ -107,6 +153,30 @@ class UserManager {
         include: USER_INCLUDE_OBJ,
       });
       return userToPublicUser(user);
+    } catch {
+      throw new NotFoundError("User not found");
+    }
+  }
+
+  static async getUserLarpVisibility(username: string) {
+    try {
+      const user = await prisma.user.findUniqueOrThrow({
+        where: { username },
+        include: USER_INCLUDE_OBJ,
+      });
+      return userVisibility(user.eventVisibility);
+    } catch {
+      throw new NotFoundError("User not found");
+    }
+  }
+
+  static async getUserCalendarKey(username: string) {
+    try {
+      const user = await prisma.user.findUniqueOrThrow({
+        where: { username },
+        include: USER_INCLUDE_OBJ,
+      });
+      return user.calendarKey;
     } catch {
       throw new NotFoundError("User not found");
     }
@@ -210,6 +280,58 @@ class UserManager {
     }
   }
 
+  static async updateUserLarpVisibility({
+    username,
+    listing,
+    past,
+    future,
+  }: {
+    username: string;
+    listing: boolean;
+  } & UserLarpVisibility) {
+    let eventVisibility = ATTENDANCE_VISIBILITY_NONE;
+    if (listing) {
+      eventVisibility |= ATTENDANCE_VISIBILITY_LISTED;
+    }
+    if (past) {
+      eventVisibility |= ATTENDANCE_VISIBILITY_PAST;
+    }
+    if (future) {
+      eventVisibility |= ATTENDANCE_VISIBILITY_FUTURE;
+    }
+
+    const user = await prisma.user.update({
+      where: { username },
+      data: { eventVisibility },
+      include: USER_INCLUDE_OBJ,
+    });
+
+    return userVisibility(user.eventVisibility);
+  }
+
+  static async generateUserCalendarKey(username: string) {
+    try {
+      const calendarKey = randomUUID();
+      await prisma.user.update({ where: { username }, data: { calendarKey } });
+      return calendarKey;
+    } catch (err) {
+      console.log(err);
+      throw new NotFoundError("User not found");
+    }
+  }
+
+  static async deleteUserCalendarKey(username: string) {
+    try {
+      await prisma.user.update({
+        where: { username },
+        data: { calendarKey: null },
+      });
+    } catch (err) {
+      console.log(err);
+      throw new NotFoundError("User not found");
+    }
+  }
+
   /** Delete given user from database */
   static async deleteUser(username: string) {
     try {
@@ -235,7 +357,13 @@ function userToPublicUser(
   }>,
 ): PublicUser {
   return {
-    ...omitKeys(user, "password", "newsletterRemoteId", "newsletterSubscribed"),
+    ...omitKeys(
+      user,
+      "password",
+      "newsletterRemoteId",
+      "newsletterSubscribed",
+      "eventVisibility",
+    ),
     subscribed: user.newsletterSubscribed,
   };
 }

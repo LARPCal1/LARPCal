@@ -91,6 +91,12 @@ export type User = UserForCreate & {
   subscribed: boolean;
 };
 
+export interface UserLarpVisibility {
+  listing: boolean;
+  past: boolean;
+  future: boolean;
+}
+
 export type PublicUser = Omit<User, "password">;
 
 export type UserForUpdate = PartialWithRequired<

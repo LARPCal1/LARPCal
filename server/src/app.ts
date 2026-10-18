@@ -1,32 +1,45 @@
-import express, { ErrorRequestHandler } from "express";
+import express, { type Request, type ErrorRequestHandler } from "express";
 import cors from "cors";
-import { InputValidationError, NotFoundError } from "./utils/expressError";
+import { InputValidationError, NotFoundError } from "./utils/expressError.ts";
 
-import { authenticateJWT } from "./middleware/auth";
-import larpRoutes from "./routes/larps";
-import usersRoutes from "./routes/users";
-import authRoutes from "./routes/auth";
-import orgsRoutes from "./routes/orgs";
-import newslettersRoutes from "./routes/newsletters";
+import { authenticateJWT } from "./middleware/auth.ts";
+import larpRoutes from "./routes/larps.ts";
+import usersRoutes from "./routes/users.ts";
+import authRoutes from "./routes/auth.ts";
+import orgsRoutes from "./routes/orgs.ts";
+import newslettersRoutes from "./routes/newsletters.ts";
 
 const app = express();
 
-const corsOptions = {
-  origin(origin, callback) {
-    if (
-      origin === process.env.CORS_URL ||
-      (origin?.endsWith("larpcal.netlify.app") &&
-        process.env.CONTEXT === "deploy-preview")
-    ) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  optionsSuccessStatus: 200,
-} satisfies cors.CorsOptions;
+const corsCallback: cors.CorsOptionsDelegate<Request> = (req, callback) => {
+  try {
+    const url = new URL(`${req.protocol}://${req.get("HOST")}${req.url}`);
+    const { origin, pathname } = url;
+    const corsOptions = {
+      origin: process.env.CORS_URL,
+      optionsSuccessStatus: 200,
+    } satisfies cors.CorsOptions;
 
-app.use(cors(corsOptions));
+    if (
+      pathname.endsWith("/calendar/share") ||
+      process.env.NODE_ENV === "test"
+    ) {
+      corsOptions.origin = "*";
+    } else if (
+      origin?.endsWith("larpcal.netlify.app") &&
+      process.env.CONTEXT === "deploy-preview"
+    ) {
+      corsOptions.origin = origin;
+    }
+
+    callback(null, corsOptions);
+  } catch (err) {
+    console.error(`CORS error with ${req.url}:`, err, req.get("host"));
+    callback(new Error("Not allowed by CORS"));
+  }
+};
+
+app.use(cors(corsCallback));
 app.use(express.json());
 app.use(authenticateJWT);
 

@@ -5,7 +5,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { mockDeep } from "jest-mock-extended";
+import { mockDeep } from "vitest-mock-extended";
 
 const BUCKET_NAME = process.env.BUCKET_NAME;
 const BUCKET_REGION = process.env.BUCKET_REGION;
@@ -81,8 +81,6 @@ async function uploadMultiple(images: { buffer: Buffer; path: string }[]) {
  * Returns the response from the s3 server.
  */
 async function deleteFile(path: string) {
-  console.log(path);
-
   const params = {
     Bucket: BUCKET_NAME,
     Key: path,
@@ -100,7 +98,6 @@ async function deleteFile(path: string) {
 async function deleteMultiple(paths: string[]) {
   const deletePromises = paths.map((path) => deleteFile(path));
   const deleteResponses = await Promise.all(deletePromises);
-  console.log(deleteResponses);
   return deleteResponses;
 }
 

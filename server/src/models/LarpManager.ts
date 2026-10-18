@@ -1,16 +1,36 @@
-import { prisma } from "../prismaSingleton";
-import { Larp, LarpForCreate, LarpForUpdate, LarpQuery } from "../types";
-import { BadRequestError, NotFoundError } from "../utils/expressError";
-import { Tag } from "../types";
-import ImageHandler from "../utils/imageHandler";
-import { Prisma, TicketStatus } from "@prisma/client";
-import { deleteMultiple } from "../api/s3";
+import { prisma } from "../prismaSingleton.ts";
+import type {
+  Larp,
+  LarpForCreate,
+  LarpForUpdate,
+  LarpQuery,
+  Tag,
+  UserLarpVisibility,
+} from "../types/index.ts";
+import {
+  BadRequestError,
+  ExpressError,
+  NotFoundError,
+} from "../utils/expressError.ts";
+import ImageHandler from "../utils/imageHandler.ts";
+import type { Prisma } from "../generated/prisma/client.ts";
+import { TicketStatus } from "../generated/prisma/enums.ts";
+import { deleteMultiple } from "../api/s3.ts";
+import {
+  ATTENDANCE_STATUS_GOING,
+  ATTENDANCE_STATUS_NONE,
+  ATTENDANCE_STATUS_WANTING,
+  ATTENDANCE_STATUSES,
+  attendanceStatusToLabel,
+  type AttendanceStatus,
+  type AttendanceStatusLabels,
+} from "../utils/attendance.ts";
 
 const LARP_INCLUDE_OBJ = {
   tags: true,
   imgUrl: true,
   organization: { include: { imgUrl: true } },
-};
+} satisfies Prisma.LarpInclude;
 
 const BUCKET_NAME = process.env.BUCKET_NAME;
 const DEFAULT_IMG_URL = `https://${BUCKET_NAME}.s3.amazonaws.com/larpImage/default`;
@@ -92,30 +112,29 @@ class LarpManager {
         gte: query.createdAfter ? new Date(query.createdAfter) : undefined,
         lte: query.createdBefore ? new Date(query.createdBefore) : undefined,
       },
-      city: {
-        contains: query.city,
-        mode: "insensitive",
-      },
-      country: {
-        contains: query.country,
-        mode: "insensitive",
-      },
-      language: {
-        contains: query.language,
-        mode: "insensitive",
-      },
-      organization: {
-        orgName: {
-          contains: query.org,
-          mode: "insensitive",
-        },
-        id: {
-          equals: query.orgId,
-        },
-      },
-      isFeatured: {
-        equals: query.isFeatured,
-      },
+      city: query.city
+        ? { contains: query.city, mode: "insensitive" }
+        : undefined,
+      country: query.country
+        ? { contains: query.country, mode: "insensitive" }
+        : undefined,
+      language: query.language
+        ? { contains: query.language, mode: "insensitive" }
+        : undefined,
+      organization:
+        query.org || query.orgId !== undefined
+          ? {
+              orgName: query.org
+                ? { contains: query.org, mode: "insensitive" }
+                : undefined,
+              id:
+                query.orgId !== undefined ? { equals: query.orgId } : undefined,
+            }
+          : undefined,
+      isFeatured:
+        query.isFeatured !== undefined
+          ? { equals: query.isFeatured }
+          : undefined,
       isPublished: {
         equals: query.isPublished ?? true,
       },
@@ -132,57 +151,40 @@ class LarpManager {
     };
 
     // Query contains search term and filters
-    const term = query.term
-      ? query.term
-          .split(" ")
-          .map((s) => s.trim())
-          .join(" & ")
-      : null;
-    if (term) {
-      const termFilter = {
-        search: term,
-        mode: "insensitive",
-      } satisfies Prisma.StringFilter;
-
+    const words = (query.term ?? "").split(/\s+/).filter(Boolean);
+    if (words.length > 0) {
       queryFilters = {
-        AND: {
-          OR: [
-            { title: termFilter },
-            { description: termFilter },
-            { city: termFilter },
-            { country: termFilter },
-            { language: termFilter },
-            { tags: { some: { name: termFilter } } },
-            { organization: { orgName: termFilter } },
-          ],
-          ...queryFilters,
-        },
+        AND: [
+          queryFilters,
+          ...words.map((word): Prisma.LarpWhereInput => {
+            const f = { contains: word, mode: "insensitive" } as const;
+            return {
+              OR: [
+                { title: f },
+                { description: f },
+                { city: f },
+                { country: f },
+                { language: f },
+                { tags: { some: { name: f } } },
+                { organization: { orgName: f } },
+              ],
+            };
+          }),
+        ],
       };
     }
-
-    const orderBy: Prisma.LarpOrderByWithRelationInput = term
-      ? ({
-          _relevance: {
-            fields: ["title", "description", "country", "city", "language"],
-            search: term,
-            sort: "asc",
-          },
-        } satisfies Prisma.LarpOrderByWithRelationInput)
-      : { start: "asc" };
 
     return prisma.larp.findMany({
       where: queryFilters,
       include: LARP_INCLUDE_OBJ,
-      orderBy,
+      orderBy: { start: "desc" },
     });
   }
 
   static async getLarpById(id: number): Promise<Larp> {
     try {
       const larp = await prisma.larp.findUniqueOrThrow({
-        where: {
-          id: id,
-        },
+        where: { id },
         include: LARP_INCLUDE_OBJ,
       });
       return larp;
@@ -247,11 +249,6 @@ class LarpManager {
   }
 
   static async deleteLarpById(id: number): Promise<Larp> {
-    // try { await this.deleteRecipeImage(id); }
-    //   catch(err) {
-    //   console.warn(`Image for recipeId ${id} could not be deleted`);
-    // }
-
     try {
       const larp = await prisma.larp.delete({
         where: {
@@ -266,6 +263,154 @@ class LarpManager {
     }
   }
 
+  /* ATTENDANCE */
+
+  static async getLarpAttendance(larpId: number) {
+    try {
+      const attendances = await prisma.userAttendance.findMany({
+        where: { larpId },
+        include: {
+          user: true,
+        },
+      });
+
+      return attendances
+        .map(({ user, status }) => ({
+          username: user.username,
+          firstName: user.firstName as string | undefined,
+          lastName: user.lastName as string | undefined,
+          status: attendanceStatusToLabel(status),
+        }))
+        .filter(({ status }) => status !== "none");
+    } catch {
+      throw new NotFoundError("Larp not found");
+    }
+  }
+
+  static async getLarpAttendanceStatusById(larpId: number, userId: number) {
+    try {
+      const attendance = await prisma.userAttendance.findUniqueOrThrow({
+        where: { userId_larpId: { userId, larpId } },
+      });
+      return attendance;
+    } catch {
+      throw new NotFoundError("Larp attendance not found");
+    }
+  }
+
+  static async getLarpAttendanceCountsById(larpId: number) {
+    try {
+      const attendances = await prisma.userAttendance.findMany({
+        where: { larpId },
+      });
+
+      let wanting = 0;
+      let going = 0;
+
+      for (const attendance of attendances) {
+        if (attendance.status === ATTENDANCE_STATUS_WANTING) {
+          wanting++;
+        } else if (attendance.status === ATTENDANCE_STATUS_GOING) {
+          going++;
+        }
+      }
+
+      return { wanting, going };
+    } catch {
+      throw new NotFoundError("Larp not found");
+    }
+  }
+
+  static async getLarpsByUsername({
+    username,
+    past,
+    future,
+    status,
+  }: {
+    username: string;
+    status?: AttendanceStatus;
+  } & Omit<UserLarpVisibility, "listing">): Promise<
+    (Larp & { attendance?: AttendanceStatusLabels })[]
+  > {
+    try {
+      const attendance = await prisma.userAttendance.findMany({
+        where: {
+          user: {
+            username,
+          },
+          status,
+        },
+      });
+
+      const larpIds = attendance.map(({ larpId }) => larpId);
+
+      const now = new Date();
+      let endFilter: Prisma.DateTimeFilter<"Larp"> | undefined;
+      if (!past && future) {
+        endFilter = { gte: now };
+      } else if (past && !future) {
+        endFilter = { lt: now };
+      }
+
+      const attendanceMap = new Map(
+        attendance.map(({ larpId, status }) => [
+          larpId,
+          attendanceStatusToLabel(status),
+        ]),
+      );
+
+      const larps = await prisma.larp.findMany({
+        where: {
+          id: {
+            in: larpIds,
+          },
+          end: endFilter,
+        },
+        include: LARP_INCLUDE_OBJ,
+      });
+      return larps.map((larp) => ({
+        attendance: attendanceMap.get(larp.id),
+        ...larp,
+      }));
+    } catch (err: unknown) {
+      console.error(`Got error getting larps by username ${username}:`, err);
+      throw new NotFoundError("User not found");
+    }
+  }
+
+  static async updateLarpAttendance({
+    userId,
+    larpId,
+    status: statusLabel,
+  }: {
+    userId: number;
+    larpId: number;
+    status: AttendanceStatusLabels;
+  }) {
+    const status = ATTENDANCE_STATUSES[statusLabel];
+    if (status === undefined) {
+      throw new BadRequestError(`Invalid status: ${statusLabel}`);
+    }
+
+    try {
+      if (status === ATTENDANCE_STATUS_NONE) {
+        await prisma.userAttendance.delete({
+          where: { userId_larpId: { userId, larpId } },
+        });
+      } else {
+        await prisma.userAttendance.upsert({
+          where: { userId_larpId: { userId, larpId } },
+          create: { userId, larpId, status },
+          update: { status },
+        });
+      }
+
+      return this.getLarpAttendanceCountsById(larpId);
+    } catch {
+      throw new ExpressError("Could not update attendance");
+    }
+  }
+
   /**************************** IMAGES ***************************************/
 
   /**Uploads a file to s3 and stores the resulting uri in the imageUrl property
@@ -276,7 +421,7 @@ class LarpManager {
    * @returns the updated larp
    */
   static async updateLarpImage(file: Express.Multer.File, id: number) {
-    const larp = await LarpManager.getLarpById(+id);
+    const larp = await LarpManager.getLarpById(id);
     const s3Path = `larpImage/larp-${id}`;
     const basePath = `https://${BUCKET_NAME}.s3.amazonaws.com/${s3Path}`;
     const uuid = crypto.randomUUID();
