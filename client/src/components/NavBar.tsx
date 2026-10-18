@@ -17,6 +17,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faBars,
   faCalendar,
+  faMasksTheater,
   faShapes,
   faUserAlt,
 } from "@fortawesome/free-solid-svg-icons";
@@ -273,6 +274,15 @@ function NavBar() {
         >
           LARPs
         </MenuItem>
+
+        <MenuItem
+          component={RouterLink}
+          to="/players"
+          onClick={() => setShowAccountMenu(false)}
+        >
+          Players
+        </MenuItem>
+
         {UNAPPROVED_ORG_ITEMS}
         {APPROVED_ORG_ITEMS}
         {ADMIN_ITEMS}
@@ -359,6 +369,14 @@ function NavBar() {
               >
                 <FontAwesomeIcon icon={faCalendar} />
                 LARPS
+              </Button>
+              <Button
+                component={RouterLink}
+                to="/players"
+                className="NavBar-button"
+              >
+                <FontAwesomeIcon icon={faMasksTheater} />
+                PLAYERS
               </Button>
               <Button
                 className="NavBar-button"
