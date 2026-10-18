@@ -69,7 +69,7 @@ export default function LarpCard({ larp, attendance }: LarpCardProps) {
         spacing={0.5}
         flexBasis={1}
       >
-        {showAttendance ? (
+        {showAttendance && (
           <Typography
             variant="details1"
             color={attendance === "going" ? "success.main" : "warning.main"}
@@ -78,7 +78,8 @@ export default function LarpCard({ larp, attendance }: LarpCardProps) {
               ? `You are ${attendance === "wanting" ? "interested" : "going"}`
               : `You ${attendance === "going" ? "attended" : "had interested"}`}
           </Typography>
-        ) : (
+        )}
+        {!showAttendance && !isPast && (
           <Typography color={ticketColor} variant="details2">
             Tickets: {formatTicketStatus(larp.ticketStatus)}
           </Typography>
@@ -101,12 +102,10 @@ export default function LarpCard({ larp, attendance }: LarpCardProps) {
             {larp.title}
           </Typography>
         </TextLink>
-
         <Typography className=".dates" variant={"details1"}>
           {`${JSDateToLuxon(larp.start).toLocaleString({ weekday: "short", month: "short", day: "numeric" })}
                          - ${JSDateToLuxon(larp.end).toLocaleString({ weekday: "short", month: "short", day: "numeric", year: "numeric" })}`}
         </Typography>
-
         <Box className="LarpCard-details">
           <Stack
             direction="row"
@@ -140,7 +139,6 @@ export default function LarpCard({ larp, attendance }: LarpCardProps) {
             </Typography>
           </Stack>
         </Box>
-
         <Stack direction="row" flexWrap="wrap" gap={1} margin="auto">
           {larp.tags.slice(0, 4).map((tag) => (
             <TagCard key={tag.name} tag={tag} />

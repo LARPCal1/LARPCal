@@ -106,9 +106,11 @@ function LarpDetails({ larp }: LarpDetailsProps) {
               {larp.organization.orgName}
             </TextLink>
           </Typography>
-          <Typography variant="details2" component="p">
-            Tickets: {formatTicketStatus(larp.ticketStatus)}
-          </Typography>
+          {!isPast && (
+            <Typography variant="details2" component="p">
+              Tickets: {formatTicketStatus(larp.ticketStatus)}
+            </Typography>
+          )}
           <Typography variant="details2" component="p" className="attendance">
             {!!attendance?.attendees.wanting && !isPast && (
               <span>{attendance.attendees.wanting} want to go</span>
